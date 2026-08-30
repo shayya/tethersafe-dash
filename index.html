@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Totem · Live Diagnostics (Web Bluetooth)</title>
+<title>TetherSafe · Live Diagnostics (Web Bluetooth)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -87,7 +87,7 @@
 <body>
 <div class="wrap">
   <header>
-    <span class="logo">TOTEM</span>
+    <span class="logo">TETHERSAFE</span>
     <button id="btnConn" onclick="toggleConn()">Connect</button>
     <span id="conn" class="pill off"><span class="dot"></span><span id="connTxt">tap Connect</span></span>
     <span class="pill spacer"><span id="fw">fw —</span></span>
@@ -199,7 +199,7 @@
       <div class="motors" id="motorBtns"></div>
       <div class="btns" style="margin-top:14px">
         <button class="danger" onclick="confirmCmd('Switch to the OTHER OTA slot and reboot (boot stock 4.2.1)?\\n\\nThe diagnostic channel will drop.',{cmd:'R'})">⤺ Boot other slot · stock 4.2.1</button>
-        <button class="danger" onclick="confirmCmd('Reboot into direct-connect update mode?\n\nStatus pixel goes VIOLET and the unit raises its own hotspot (totem-ota-XXXX / totemflash) serving http://192.168.4.1. Power-cycle to abort.',{cmd:'W'})">WiFi update mode</button>
+        <button class="danger" onclick="confirmCmd('Reboot into direct-connect update mode?\n\nStatus pixel goes VIOLET and the unit raises its own hotspot (tethrsafe-XXXX / tethersafe) serving http://192.168.4.1. Power-cycle to abort.',{cmd:'W'})">WiFi update mode</button>
       </div>
       <div class="hint" id="hint"></div>
     </div>
@@ -238,7 +238,7 @@
       <pre id="errs" class="err clear">All clear.</pre>
     </div>
   </div>
-  <div class="foot" id="foot">Web Bluetooth build · open in Bluefy on iOS · talks straight to the Totem, no Mac needed</div>
+  <div class="foot" id="foot">Web Bluetooth build · open in Bluefy on iOS · talks straight to the tracker, no Mac needed</div>
 </div>
 
 <script>
