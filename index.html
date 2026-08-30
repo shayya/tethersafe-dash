@@ -232,6 +232,22 @@
       </div>
     </div>
 
+    <!-- Firmware: one-tap BLE flash of the hosted (password-encrypted) image -->
+    <div class="card c12" id="fwCard">
+      <h2>Firmware · flash over Bluetooth</h2>
+      <div class="sub" id="fwInfo" style="text-align:left">checking hosted firmware…</div>
+      <div class="btns" style="align-items:center;margin-top:10px">
+        <input id="fwPass" type="password" placeholder="firmware password" autocomplete="current-password"
+          style="background:#1c2532;color:#e6edf3;border:1px solid #283040;border-radius:10px;padding:9px 13px;font-size:14px">
+        <button id="fwGo" onclick="flashFw()">Flash firmware</button>
+      </div>
+      <div style="height:10px;background:#21262d;border-radius:6px;margin-top:12px;overflow:hidden;display:none" id="fwBar">
+        <i id="fwFill" style="display:block;height:100%;width:0;background:#58a6ff;transition:width .3s"></i></div>
+      <div class="hint" id="fwMsg" style="text-align:left"></div>
+      <div class="sub" style="text-align:left">Takes ~5 minutes over Bluetooth. Keep this page open and the phone near
+      the unit. Safe: the unit verifies the image before booting it — an interrupted or wrong upload changes nothing.</div>
+    </div>
+
     <!-- Errors -->
     <div class="card c12">
       <h2>Errors &amp; traceback</h2>
@@ -250,6 +266,7 @@
 // ===========================================================================
 const SERVICE_UUID='7913b588-0000-4635-b066-baa2cfc197cf';
 const DATA_UUID   ='7913b588-0002-4635-b066-baa2cfc197cf';
+const STATUS_UUID ='7913b588-0001-4635-b066-baa2cfc197cf';  // OTA init + transfer-status notifications
 // device command bytes (ASCII) — same as the Python tools' CMD_* / _cmd_bytes()
 const CMD={P:0x50, H:0x48, R:0x52, O:0x4f, D:0x44, W:0x57, V:0x56, Z:0x5a}; // + wifi-update, preview, zone-cfg
 
@@ -552,6 +569,93 @@ function applyZoneCfg(){
   $('hint').textContent='zone config sent — watch "device:" confirm';
 }
 
+// ---- one-tap firmware flash (encrypted blob on this site -> BLE-OTA to the device) ----------
+const FW_META='fw.json', FW_BLOB='fw.enc';
+let _fwMeta=null;
+fetch(FW_META,{cache:'no-store'}).then(r=>r.json()).then(m=>{_fwMeta=m;
+  $('fwInfo').textContent='hosted build: '+(m.built||'?')+' · sha '+String(m.sha256||'').slice(0,8)+
+    ' · '+(m.size/1024|0)+' KB — compare with the ota= line on the device';
+  const p=localStorage.getItem('fwPass');if(p)$('fwPass').value=p;
+}).catch(()=>{$('fwInfo').textContent='no hosted firmware found on this site.';$('fwGo').disabled=true;});
+
+async function decryptFw(pass,meta,cipherBuf){
+  const enc=new TextEncoder();
+  const km=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveKey']);
+  const key=await crypto.subtle.deriveKey(
+    {name:'PBKDF2',salt:Uint8Array.from(atob(meta.salt),c=>c.charCodeAt(0)),iterations:200000,hash:'SHA-256'},
+    km,{name:'AES-GCM',length:256},false,['decrypt']);
+  return await crypto.subtle.decrypt(
+    {name:'AES-GCM',iv:Uint8Array.from(atob(meta.iv),c=>c.charCodeAt(0))},key,cipherBuf);
+}
+function fwMsg(t,bad){const e=$('fwMsg');e.textContent=t;e.style.color=bad?'#f85149':'#d29922';}
+function buildInit(size,sha){
+  const p=new Uint8Array(51+6),dv=new DataView(p.buffer);
+  p[0]=2;p[1]=3;dv.setUint16(2,1,true);p[4]=1;p[5]=1;p[6]=1;   // file_id=1 status=1 action=1 type=OTA
+  dv.setInt32(7,0,true);dv.setUint16(11,0,true);dv.setInt32(13,size,true);p[17]=0;
+  p.set(sha,18);p[50]=6;p.set(new TextEncoder().encode('fw.bin'),51);
+  return p;
+}
+function buildChunk(no,pos,payload){
+  const p=new Uint8Array(12+payload.length),dv=new DataView(p.buffer);
+  p[0]=15;p[1]=0;dv.setUint16(2,0,true);dv.setUint16(4,payload.length,true);
+  dv.setInt32(6,pos,true);dv.setUint16(10,no,true);p.set(payload,12);
+  return p;
+}
+async function flashFw(){
+  if(!_fwMeta){fwMsg('no hosted firmware',1);return;}
+  if(!_connected||!_char||!_statusChar){fwMsg('connect to the unit first',1);return;}
+  const pass=$('fwPass').value;if(!pass){fwMsg('enter the firmware password',1);return;}
+  $('fwGo').disabled=true;_flashing=true;
+  try{
+    fwMsg('downloading…');
+    const cipher=await (await fetch(FW_BLOB,{cache:'no-store'})).arrayBuffer();
+    fwMsg('decrypting…');
+    let plain;
+    try{plain=await decryptFw(pass,_fwMeta,cipher);}
+    catch(e){fwMsg('wrong password (decrypt failed)',1);return;}
+    localStorage.setItem('fwPass',pass);
+    const shaBuf=new Uint8Array(await crypto.subtle.digest('SHA-256',plain));
+    const shaHex=[...shaBuf].map(b=>b.toString(16).padStart(2,'0')).join('');
+    if(_fwMeta.sha256&&shaHex!==_fwMeta.sha256){fwMsg('decrypted image failed its checksum',1);return;}
+    // wait out any in-flight poll read, then own the link
+    let g=0;while(_busy&&g++<50)await new Promise(r=>setTimeout(r,20));
+    _busy=true;
+    const done={};
+    const onStat=ev=>{const v=ev.target.value;   // DataView; layout: [0]=2 [4]=status_id [5]=action_id
+      if(v.byteLength>=18&&v.getUint8(0)===2){
+        const sid=v.getUint8(4),act=v.getUint8(5);
+        if(sid===2)done.ok=true; else if(sid===3)done.err='device: sha mismatch';
+        else if(act===4)done.err='device rejected a chunk';}};
+    await _statusChar.startNotifications();
+    _statusChar.addEventListener('characteristicvaluechanged',onStat);
+    fwMsg('starting transfer…');
+    await _statusChar.writeValueWithResponse(buildInit(plain.byteLength,shaBuf));
+    await new Promise(r=>setTimeout(r,300));
+    const img=new Uint8Array(plain),PAY=480,total=img.length;
+    $('fwBar').style.display='block';
+    let no=0,pos=0,t0=Date.now();
+    while(pos<total&&!done.err){
+      const payload=img.subarray(pos,Math.min(pos+PAY,total));
+      no++;
+      await _char.writeValueWithResponse(buildChunk(no,pos,payload));
+      pos+=payload.length;
+      if(no%25===0){
+        const pct=100*pos/total,el=(Date.now()-t0)/1000,eta=el/pos*(total-pos);
+        $('fwFill').style.width=pct.toFixed(0)+'%';
+        fwMsg('flashing '+pct.toFixed(0)+'% · ~'+Math.ceil(eta/60)+' min left');
+      }
+    }
+    if(done.err){fwMsg(done.err,1);return;}
+    fwMsg('sent — waiting for the unit to verify…');
+    for(let i=0;i<120&&!done.ok&&!done.err;i++)await new Promise(r=>setTimeout(r,500));
+    if(done.ok){$('fwFill').style.width='100%';
+      fwMsg('VERIFIED — the unit is rebooting into the new firmware. It will reconnect in ~30 s.');}
+    else if(done.err)fwMsg(done.err,1);
+    else fwMsg('no verify confirmation — check the unit (it may still reboot on its own)',1);
+  }catch(e){fwMsg('flash failed: '+(e&&e.message?e.message:e)+' — safe to retry',1);}
+  finally{_busy=false;_flashing=false;$('fwGo').disabled=false;}
+}
+
 // =================================== parser (port of parse_report/_kv) =====================
 function _kv(s){const d={};for(const tok of s.split(' ')){const i=tok.indexOf('=');if(i>=0)d[tok.slice(0,i)]=tok.slice(i+1);}return d;}
 function _find(line,prefix){const i=line.indexOf(prefix);if(i<0)return null;return line.slice(i+prefix.length).split(' ')[0];}
@@ -582,7 +686,7 @@ function parseReport(text){
 }
 
 // =================================== Web Bluetooth transport ===============================
-let _device=null,_char=null,_poller=null,_lastRx=0,_connected=false,_busy=false;
+let _device=null,_char=null,_statusChar=null,_poller=null,_lastRx=0,_connected=false,_busy=false,_flashing=false;
 let _userQuit=false,_reconnecting=false;
 let _lastParsed={},_lastReport='';
 const POLL_MS=500;  // iOS Web Bluetooth is fragile at high rates — 2 Hz is plenty for diagnostics
@@ -608,7 +712,7 @@ async function writeChar(bytes){
 
 // the proven poll cycle: write 'D' (re-render, no I2C) -> wait ~80 ms -> read the full ~900 B report
 async function poll(){
-  if(!_connected||!_char||_busy)return;
+  if(!_connected||!_char||_busy||_flashing)return;
   _busy=true;
   try{
     await writeChar(Uint8Array.of(CMD.D));
@@ -658,6 +762,7 @@ async function attach(){
   const server=await _device.gatt.connect();
   const svc=await server.getPrimaryService(SERVICE_UUID);
   _char=await svc.getCharacteristic(DATA_UUID);
+  try{_statusChar=await svc.getCharacteristic(STATUS_UUID);}catch(e){_statusChar=null;}
   _connected=true;_lastRx=0;_busy=false;_reconnecting=false;
   $('btnConn').textContent='Disconnect';
   setConn('stale','connected');
