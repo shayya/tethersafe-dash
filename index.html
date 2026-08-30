@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Totem · Live Diagnostics (Web Bluetooth)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --card2:#1c2532; --line:#283040; --txt:#e6edf3; --dim:#8b949e;
+    --x:#39c5cf; --y:#bc8cff; --z:#3fb950; --accent:#58a6ff; --warn:#d29922; --bad:#f85149; --good:#3fb950;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--txt);font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,Roboto,sans-serif;
+       background:radial-gradient(1100px 700px at 75% -15%, #1b2a3f55, transparent 60%), var(--bg);min-height:100vh}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  .logo{font-weight:800;letter-spacing:4px;font-size:20px}
+  .pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;
+        background:var(--card);border:1px solid var(--line);font-size:12px;color:var(--dim);
+        font-variant-numeric:tabular-nums}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+  .pill.live .dot{background:var(--good);animation:pulse 1.6s infinite}
+  .pill.live{color:var(--good)} .pill.stale .dot{background:var(--warn)} .pill.stale{color:var(--warn)}
+  .pill.off .dot{background:var(--bad)} .pill.off{color:var(--bad)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 #3fb95055}70%{box-shadow:0 0 0 7px #3fb95000}100%{box-shadow:0 0 0 0 #3fb95000}}
+  .spacer{margin-left:auto}
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+  .card{background:linear-gradient(180deg,#171d27,#141922);border:1px solid var(--line);border-radius:16px;padding:18px;
+        box-shadow:0 1px 0 #ffffff08 inset}
+  .card h2{margin:0 0 14px;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);font-weight:700}
+  .c7{grid-column:span 7}.c5{grid-column:span 5}.c4{grid-column:span 4}.c8{grid-column:span 8}.c12{grid-column:span 12}
+  @media(max-width:840px){.grid>*{grid-column:span 12 !important}}
+  .gauges{display:flex;gap:20px;justify-content:center;align-items:center;flex-wrap:wrap}
+  .xyz{display:flex;justify-content:space-around;margin-top:16px;gap:8px}
+  .xyz .ax{text-align:center;flex:1}
+  .xyz .lbl{font-size:10.5px;letter-spacing:1.3px;color:var(--dim);font-weight:600}
+  .xyz .val{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px}
+  .ax.x .val{color:var(--x)} .ax.y .val{color:var(--y)} .ax.z .val{color:var(--z)}
+  .sub{color:var(--dim);font-size:12.5px;text-align:center;margin-top:10px}
+  table.kv{width:100%;border-collapse:collapse}
+  table.kv td{padding:7px 0;border-bottom:1px solid #1d2530;font-variant-numeric:tabular-nums}
+  table.kv td:first-child{color:var(--dim);width:42%}
+  table.kv tr:last-child td{border-bottom:none}
+  .badge{padding:2px 9px;border-radius:6px;font-size:12px;font-weight:700}
+  .badge.ok{background:#103021;color:var(--good)} .badge.no{background:#3a1717;color:var(--bad)}
+  .vibe{display:flex;gap:24px;align-items:center;flex-wrap:wrap}
+  .zoneBox{min-width:190px;text-align:center}
+  .zoneBadge{font-size:25px;font-weight:800;letter-spacing:1.4px;padding:11px 18px;border-radius:13px;
+             background:var(--card2);border:1px solid var(--line);text-transform:uppercase;color:var(--dim)}
+  .zoneBadge.ding{animation:ding .5s ease-out}
+  @keyframes ding{0%{transform:scale(1.12)}100%{transform:scale(1)}}
+  .zoneDesc{color:var(--dim);font-size:12.5px;margin-top:9px}
+  .vstats{display:flex;gap:22px;flex:1;flex-wrap:wrap;justify-content:space-around}
+  .vstat{text-align:center;min-width:74px}
+  .vstat .lbl{font-size:10.5px;letter-spacing:1.3px;color:var(--dim);font-weight:600}
+  .vstat .val{font-size:25px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:4px}
+  .vstat .val.sm{font-size:18px}
+  @keyframes buzz{0%,100%{opacity:1}50%{opacity:.45}}
+  .buzzing{animation:buzz .4s infinite}
+  .btns{display:flex;flex-wrap:wrap;gap:8px}
+  button{background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:10px;
+         padding:9px 13px;font-size:13px;cursor:pointer;transition:border-color .12s,transform .05s}
+  button:hover{border-color:var(--accent)} button:active{transform:translateY(1px)}
+  button.danger:hover{border-color:var(--bad);color:#ffd7d4}
+  #btnConn{font-weight:700}
+  .motors{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .motors button{min-width:40px;font-weight:600}
+  .err{color:#ffb3ae;font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:pre-wrap;margin:0}
+  .clear{color:var(--good)}
+  .muted{opacity:.45;transition:opacity .3s}
+  .foot{color:var(--dim);font-size:11px;margin-top:16px;text-align:center;font-variant-numeric:tabular-nums}
+  .hint{color:var(--warn);font-size:12px;margin-top:8px;min-height:16px;text-align:center}
+  #map{height:340px;border-radius:12px;overflow:hidden;background:#0b0e13;border:1px solid var(--line)}
+  .leaflet-container{background:#0b0e13;font:inherit}
+  .gpsStrength{display:flex;align-items:center;gap:16px}
+  .bars{display:flex;align-items:flex-end;gap:4px;height:34px}
+  .bar{width:9px;border-radius:2px;transition:background .2s,height .2s}
+  .big{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums}
+  .sub2{font-size:10.5px;color:var(--dim);letter-spacing:1px}
+  .vibeSentence{font-size:18px;font-weight:600;line-height:1.45;margin:-2px 0 16px}
+  .vibeSentence b{font-weight:800}
+  .dim{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo">TOTEM</span>
+    <button id="btnConn" onclick="toggleConn()">Connect</button>
+    <span id="conn" class="pill off"><span class="dot"></span><span id="connTxt">tap Connect</span></span>
+    <span class="pill spacer"><span id="fw">fw —</span></span>
+  </header>
+
+  <div class="grid">
+    <!-- Orientation -->
+    <div class="card c7" id="orientCard">
+      <h2>Orientation · X·Y·Z</h2>
+      <div class="gauges">
+        <!-- Compass: Z=yaw — the whole dial rotates so north stays up when facing north -->
+        <svg id="compass" width="200" height="200" viewBox="0 0 200 200">
+          <circle cx="100" cy="100" r="94" fill="#0b0e13" stroke="#283040" stroke-width="2"/>
+          <g id="compassDial">
+            <g id="compassTicks" stroke="#39414d" stroke-width="2"></g>
+            <g fill="#8b949e" font-size="14" font-weight="700" text-anchor="middle" font-family="inherit">
+              <text x="100" y="29">N</text><text x="176" y="105">E</text>
+              <text x="100" y="181">S</text><text x="24" y="105">W</text>
+            </g>
+          </g>
+          <!-- fixed heading triangle at top -->
+          <polygon points="100,8 94,20 106,20" fill="#f85149"/>
+          <circle cx="100" cy="100" r="6" fill="#e6edf3" stroke="#0b0e13" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="xyz">
+        <div class="ax x"><div class="lbl">X · ROLL</div><div class="val" id="vx">--</div></div>
+        <div class="ax y"><div class="lbl">Y · PITCH</div><div class="val" id="vy">--</div></div>
+        <div class="ax z"><div class="lbl">Z · YAW</div><div class="val" id="vz">--</div></div>
+      </div>
+      <div class="sub" id="orientSub">—</div>
+    </div>
+
+    <!-- Status -->
+    <div class="card c5">
+      <h2>Status</h2>
+      <table class="kv">
+        <tr><td>firmware</td><td id="s_fw">—</td></tr>
+        <tr><td>healthy</td><td id="s_healthy">—</td></tr>
+        <tr><td>boot stage</td><td id="s_stage">—</td></tr>
+        <tr><td>uptime</td><td id="s_up">—</td></tr>
+        <tr><td>free memory</td><td id="s_mem">—</td></tr>
+        <tr><td>reset cause</td><td id="s_rc">—</td></tr>
+        <tr><td>running slot</td><td id="s_run">—</td></tr>
+      </table>
+    </div>
+
+    <!-- Map: you (Totem) centered + the tracked tag (greys to last-known when its signal goes stale) -->
+    <div class="card c8" id="mapCard">
+      <h2>Map · you + tracked tag</h2>
+      <div id="map"></div>
+      <div class="sub" id="mapSub">—</div>
+    </div>
+
+    <!-- GPS signal strength (live per-satellite C/N0 dBHz) + device motion -->
+    <div class="card c4" id="gpsCard">
+      <h2>GPS signal</h2>
+      <div class="gpsStrength">
+        <div class="bars" id="cnoBars"></div>
+        <div><span class="big" id="cnoAvg">—</span> <span class="sub2">dBHz avg</span></div>
+      </div>
+      <table class="kv" style="margin-top:14px">
+        <tr><td>fix</td><td id="g_fix">—</td></tr>
+        <tr><td>satellites</td><td id="g_sat">—</td></tr>
+        <tr><td>accuracy</td><td id="g_acc">—</td></tr>
+        <tr><td>C/N0 min–max</td><td id="g_cno">—</td></tr>
+        <tr><td>fix age</td><td id="g_age">—</td></tr>
+        <tr><td>altitude</td><td id="g_alt">—</td></tr>
+        <tr><td>ground speed</td><td id="g_spd">—</td></tr>
+        <tr><td>course</td><td id="g_cog">—</td></tr>
+      </table>
+    </div>
+
+    <!-- Vibration: plain-language description of what the haptic ring is doing right now -->
+    <div class="card c12" id="vibeCard">
+      <h2>Vibration · what the ring is telling you</h2>
+      <div class="vibeSentence" id="vibeSentence">—</div>
+      <div class="vibe">
+        <div class="zoneBox">
+          <div id="zoneBadge" class="zoneBadge">—</div>
+          <div id="zoneDesc" class="zoneDesc">—</div>
+        </div>
+        <div class="vstats">
+          <div class="vstat"><div class="lbl">DIRECTION</div><div class="val sm" id="vDir">—</div></div>
+          <div class="vstat"><div class="lbl">DISTANCE</div><div class="val" id="vDist">—</div></div>
+          <div class="vstat"><div class="lbl">BEARING</div><div class="val sm" id="vBrg">—</div></div>
+          <div class="vstat"><div class="lbl">PATTERN</div><div class="val sm" id="vPhase">—</div></div>
+          <div class="vstat"><div class="lbl">MOTORS</div><div class="val sm" id="vPulse">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Haptic ring -->
+    <div class="card c4">
+      <h2>Haptic ring</h2>
+      <div style="display:flex;justify-content:center">
+        <svg id="ring" width="180" height="180" viewBox="0 0 180 180"></svg>
+      </div>
+      <div class="sub" id="hapSub">—</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card c8">
+      <h2>Controls</h2>
+      <div class="btns">
+        <button onclick="cmd({cmd:'P'})">Probe sensors</button>
+        <button onclick="cmd({cmd:'sweep'})">Haptic sweep ↻</button>
+      </div>
+      <div class="motors" id="motorBtns"></div>
+      <div class="btns" style="margin-top:14px">
+        <button class="danger" onclick="confirmCmd('Switch to the OTHER OTA slot and reboot (boot stock 4.2.1)?\\n\\nThe diagnostic channel will drop.',{cmd:'R'})">⤺ Boot other slot · stock 4.2.1</button>
+        <button class="danger" onclick="confirmCmd('Reboot into direct-connect update mode?\n\nStatus pixel goes VIOLET and the unit raises its own hotspot (totem-ota-XXXX / totemflash) serving http://192.168.4.1. Power-cycle to abort.',{cmd:'W'})">WiFi update mode</button>
+      </div>
+      <div class="hint" id="hint"></div>
+    </div>
+
+    <!-- Zone tuning (writes live to the tracker via the diag 'Z' command; persists on-device) -->
+    <div class="card c12" id="zoneCfgCard">
+      <h2>Zone tuning · distances &amp; strength</h2>
+      <div class="btns" style="align-items:center;gap:14px;flex-wrap:wrap">
+        <label class="sub">prox &lt; <input id="zc_p" type="number" min="1" max="998" style="width:52px"> m</label>
+        <label class="sub">safe &lt; <input id="zc_s" type="number" min="2" max="999" style="width:52px"> m</label>
+        <label class="sub">alert &gt; <input id="zc_a" type="number" min="3" max="1000" style="width:52px"> m</label>
+        <label class="sub">strength <input id="zc_v" type="range" min="10" max="100" step="5" style="width:110px;vertical-align:middle">
+          <span id="zc_vlbl">—</span>%</label>
+        <label class="sub">front <input id="zc_f" type="number" min="0" max="15" style="width:40px"></label>
+        <label class="sub">style <select id="zc_st">
+          <option value="0">classic</option><option value="1">pulse</option><option value="2">strong</option>
+        </select></label>
+        <label class="sub">tune <select id="zc_t">
+          <option value="0">patterns</option><option value="1">click</option><option value="2">double click</option>
+          <option value="3">buzz</option><option value="4">alert 1s</option><option value="5">pulsing</option>
+        </select></label>
+        <label class="sub"><input id="zc_b" type="checkbox"> boost</label>
+        <label class="sub">width <select id="zc_w">
+          <option value="1">1 motor</option><option value="2">2 motors</option><option value="3">3 motors</option>
+        </select></label>
+        <label class="sub"><input id="zc_cm" type="checkbox"> compass mode</label>
+        <button onclick="applyZoneCfg()">Apply</button>
+        <button onclick="cmd({cmd:'V'});$('hint').textContent='test fire sent (~2 s, all motors)'">Test fire</button>
+        <span class="sub" id="zc_cur">device: —</span>
+      </div>
+    </div>
+
+    <!-- Errors -->
+    <div class="card c12">
+      <h2>Errors &amp; traceback</h2>
+      <pre id="errs" class="err clear">All clear.</pre>
+    </div>
+  </div>
+  <div class="foot" id="foot">Web Bluetooth build · open in Bluefy on iOS · talks straight to the Totem, no Mac needed</div>
+</div>
+
+<script>
+// ===========================================================================
+//  Web Bluetooth Totem dashboard — the browser talks BLE to the device itself
+//  (no Python bridge). On iOS this MUST run in the Bluefy browser; Safari has
+//  no Web Bluetooth. Reuses the totem_webdash.html rendering verbatim; only the
+//  data layer (poll), command path (cmd), and the parser (parseReport) differ.
+// ===========================================================================
+const SERVICE_UUID='7913b588-0000-4635-b066-baa2cfc197cf';
+const DATA_UUID   ='7913b588-0002-4635-b066-baa2cfc197cf';
+// device command bytes (ASCII) — same as the Python tools' CMD_* / _cmd_bytes()
+const CMD={P:0x50, H:0x48, R:0x52, O:0x4f, D:0x44, W:0x57, V:0x56, Z:0x5a}; // + wifi-update, preview, zone-cfg
+
+const DIRS=['N','NE','E','SE','S','SW','W','NW'];
+// device-frame bearing (0 = front, clockwise) -> where the target is relative to you, in plain words
+const RELDIRS=['front','front-right','right','back-right','back','back-left','left','front-left'];
+function relDir(d){return RELDIRS[Math.round(((d%360)+360)%360/45)%8];}
+// 3-zone engine: per-zone colour, short meaning, and the words the sentence builder uses
+const ZONES={
+  proximity:{c:'#39c5cf',short:"they're right here — look around",word:'right here',pat:'a soft pulse every few seconds',omni:true},
+  safe:{c:'#3fb950',short:'close — relax, the system has them',word:'close',pat:'a calm double-tap heartbeat'},
+  awareness:{c:'#58a6ff',short:'out there — keep track of direction',word:'out there',pat:'a single firm pulse (quicker as they move away)'},
+  alert:{c:'#f85149',short:'far — head toward them',word:'far away',pat:'an urgent triple-tap that intensifies'},
+  signal_lost:{c:'#d29922',short:'no fresh position from the tag',word:'',pat:'a long–short–long alert'},
+  degraded:{c:'#bc8cff',short:'your GPS is down — direction only',word:'',pat:'a steady heartbeat'},
+  idle:{c:'#8b949e',short:'no tag to track',word:'',pat:'',omni:true},
+};
+const $=id=>document.getElementById(id);
+function setText(id,v){const e=$(id);if(e)e.textContent=v;}
+function num(v){if(v==null||v==='')return null;const f=parseFloat(v);return isNaN(f)?null:f;}
+function compassDir(d){return DIRS[Math.round(((d%360)+360)%360/45)%8];}
+
+// build compass ticks + ring dots once
+(function(){
+  const t=$('compassTicks');
+  for(let i=0;i<12;i++){const a=i*30*Math.PI/180,big=i%3===0,r1=big?78:84,r2=92;
+    const x1=100+r1*Math.sin(a),y1=100-r1*Math.cos(a),x2=100+r2*Math.sin(a),y2=100-r2*Math.cos(a);
+    const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);
+    l.setAttribute('stroke',big?'#55606e':'#39414d');t.appendChild(l);}
+  const ring=$('ring'),cx=90,cy=90,R=60;
+  for(let ch=0;ch<8;ch++){const a=(ch*45-90)*Math.PI/180,x=cx+R*Math.cos(a),y=cy+R*Math.sin(a);
+    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',12);c.setAttribute('id','m'+ch);
+    c.setAttribute('fill','#39414d');c.style.transition='fill .15s';ring.appendChild(c);
+    const tx=document.createElementNS('http://www.w3.org/2000/svg','text');
+    tx.setAttribute('x',x);tx.setAttribute('y',y+4);tx.setAttribute('text-anchor','middle');
+    tx.setAttribute('font-size','11');tx.setAttribute('font-weight','700');tx.setAttribute('fill','#0d1117');
+    tx.textContent=ch+1;ring.appendChild(tx);}
+  const ic=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  ic.setAttribute('cx',cx);ic.setAttribute('cy',cy);ic.setAttribute('r',20);ic.setAttribute('fill','none');
+  ic.setAttribute('stroke','#283040');ring.appendChild(ic);
+  const mb=$('motorBtns');
+  for(let i=1;i<=8;i++){const b=document.createElement('button');b.textContent=i;b.title='Buzz motor '+i;
+    b.onclick=()=>cmd({cmd:'H',ch:i-1});mb.appendChild(b);}
+})();
+
+function setCompass(yaw){
+  const d=$('compassDial');
+  if(yaw==null){d.style.opacity=.25;return;}
+  d.style.opacity=1;
+  d.setAttribute('transform','rotate('+(-yaw)+' 100 100)');
+}
+function fmtUp(ms){ms=parseInt(ms);if(isNaN(ms))return '—';let s=Math.floor(ms/1000),h=Math.floor(s/3600),
+  m=Math.floor(s%3600/60),x=s%60;return h?(h+'h'+String(m).padStart(2,'0')+'m'):(m+'m'+String(x).padStart(2,'0')+'s');}
+function fmtKB(b){b=parseInt(b);return isNaN(b)?'—':(b/1024).toFixed(1)+' KB';}
+function runSlot(chip){if(!chip)return '—';const m=/RUN=(\S+)/.exec(chip);return m?m[1]:'—';}
+
+function setConn(cls,txt){const p=$('conn');p.className='pill '+cls;setText('connTxt',txt);}
+
+function renderRing(h){
+  let mask=0;try{mask=parseInt(h.mask,16)||0;}catch(e){}
+  let ids=[];try{ids=JSON.parse(String(h.ids||'[]').replace(/None/g,'null'));}catch(e){}
+  const as=String(h.amp||'');                          // 8 bytes hex = live per-channel RTP amplitude
+  for(let ch=0;ch<8;ch++){const d=$('m'+ch);if(!d)continue;
+    const present=ids[ch]===7;
+    let a=as.length>=16?(parseInt(as.substr(ch*2,2),16)||0):((mask>>ch&1)?0x7f:0);
+    if(a>127)a=256-a;                                  // signed byte: a brake pulse -> show its magnitude
+    if(a>0){const lvl=Math.min(1,a/127);               // glow + brightness scale with drive strength
+      d.setAttribute('fill','#ffd24a');d.style.opacity=String(0.5+0.5*lvl);
+      d.style.filter='drop-shadow(0 0 '+(3+7*lvl)+'px #ffd24a)';}
+    else{d.setAttribute('fill',present?'#3fb950':'#39414d');d.style.opacity='1';d.style.filter='none';}}
+  if(h.ok===undefined){setText('hapSub','no haptic data');}
+  else{const present=ids.filter(x=>x===7).length;
+    setText('hapSub','ring '+(h.ok==='1'?'up':'down')+'   ·   '+present+'/8 motors present');}
+}
+
+// ---- map (Leaflet + OpenStreetMap): you centered, the tracked tag, last-known fallback ----
+let _map=null,_devM=null,_tagM=null,_link=null,_mapReady=false,_devKey='',_firstFix=true;
+function initMap(){
+  if(_mapReady||typeof L==='undefined')return;
+  _map=L.map('map',{zoomControl:true}).setView([20,0],2);
+  // Google Satellite (highest-res, no key) as the default base layer.
+  const gSat=L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+    {maxZoom:20,subdomains:['mt0','mt1','mt2','mt3'],attribution:'Imagery © Google'}).addTo(_map);
+  const gHyb=L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    {maxZoom:20,subdomains:['mt0','mt1','mt2','mt3'],attribution:'Imagery © Google'});  // satellite + labels
+  const esri=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics'});
+  const usgs=L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:20,attribution:'Imagery © USGS (US only)'});
+  const street=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:19,attribution:'© OpenStreetMap'});
+  const labels=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:19,attribution:'Labels © Esri'});  // transparent overlay for the non-hybrid layers
+  L.control.layers(
+    {'Google Satellite':gSat,'Google Hybrid':gHyb,'Esri Imagery':esri,'USGS Aerial (US)':usgs,'Street':street},
+    {'Place labels':labels},{collapsed:true}).addTo(_map);
+  _mapReady=true;
+  setTimeout(()=>{try{_map.invalidateSize();}catch(e){}},200);
+}
+function latlon(o){if(!o)return null;const a=num(o.lat),b=num(o.lon);return (a==null||b==null)?null:[a,b];}
+function renderMap(gps,tag){
+  initMap();
+  if(!_mapReady){setText('mapSub','map needs internet (OpenStreetMap tiles)');return;}
+  const dev=latlon(gps), tg=latlon(tag);
+  if(dev){
+    if(!_devM)_devM=L.circleMarker(dev,{radius:9,weight:2,color:'#fff',fillColor:'#58a6ff',fillOpacity:1}).addTo(_map).bindTooltip('You · Totem');
+    else _devM.setLatLng(dev);
+    const key=dev[0].toFixed(5)+','+dev[1].toFixed(5);
+    if(key!==_devKey){_map.setView(dev,_firstFix?16:_map.getZoom());_devKey=key;_firstFix=false;}  // keep you centered
+  }
+  if(tg){
+    const fresh=(tag.fresh==='1'), col=fresh?'#3fb950':'#8b949e';
+    if(!_tagM)_tagM=L.circleMarker(tg,{radius:8,weight:2,color:'#fff',fillColor:col,fillOpacity:1}).addTo(_map);
+    else{_tagM.setLatLng(tg);_tagM.setStyle({fillColor:col});}
+    _tagM.bindTooltip((tag.id||'tag')+' · '+(fresh?'live':('last known '+(tag.age||'?')+'s ago')));
+  } else if(_tagM){_map.removeLayer(_tagM);_tagM=null;}
+  if(dev&&tg){
+    if(!_link)_link=L.polyline([dev,tg],{color:'#58a6ff',weight:2,dashArray:'4 6',opacity:.6}).addTo(_map);
+    else _link.setLatLngs([dev,tg]);
+  } else if(_link){_map.removeLayer(_link);_link=null;}
+  const sub=[];
+  if(!dev)sub.push('waiting for your GPS fix');
+  if(tg)sub.push((tag.fresh==='1'?'tag live':'tag last-known '+(tag.age||'?')+'s')+(tag.dist&&tag.dist!=='-'?(' · '+tag.dist+' m away'):''));
+  else sub.push('no tracked tag yet');
+  setText('mapSub',sub.join('   ·   '));
+}
+
+// ---- GPS signal strength (per-satellite C/N0 dBHz) + device motion ----
+function renderBars(avg){
+  const box=$('cnoBars');if(!box)return;box.innerHTML='';
+  const n=avg==null?0:(avg<15?1:avg<22?2:avg<30?3:avg<38?4:5);
+  const col=avg==null?'#39414d':(avg<22?'#f85149':avg<32?'#d29922':'#3fb950');
+  for(let i=0;i<5;i++){const b=document.createElement('div');b.className='bar';
+    b.style.height=(9+i*5)+'px';b.style.background=i<n?col:'#283040';box.appendChild(b);}
+}
+function renderGps(g){
+  g=g||{};
+  const cno=String(g.cno||'-/-/-').split('/');           // [min, avg, max] dBHz
+  const avg=num(cno[1]);
+  setText('cnoAvg',avg==null?'—':cno[1]); renderBars(avg);
+  const fixMap={'0':'no fix','2':'2D fix','3':'3D fix','4':'GNSS+DR','5':'time only'},
+        solMap={'1':'strong','2':'normal'};
+  setText('g_fix',(fixMap[g.fix]||(g.fix!=null?('fix '+g.fix):'—'))+(solMap[g.sol]?(' · '+solMap[g.sol]):''));
+  setText('g_sat',g.sat!=null?(g.sat+' tracked'+(g.cnt&&g.cnt!=='0'?(' · '+g.cnt+' with signal'):'')):'—');
+  setText('g_acc',(g.acc&&g.acc!=='-')?('±'+g.acc+' m'):'—');
+  setText('g_cno',(cno[0]!=='-'&&cno[2]!=='-')?(cno[0]+'–'+cno[2]+' dBHz'):'—');
+  setText('g_age',(g.age&&g.age!=='-')?(g.age+' s ago'):'—');
+  setText('g_alt',(g.alt&&g.alt!=='-')?(g.alt+' m'):'—');
+  setText('g_spd',(g.spd!=null)?(g.spd+' km/h'):'—');
+  const cog=num(g.cog);
+  setText('g_cog',(cog!=null&&cog>=0)?(g.cog+'° '+compassDir(cog)):'—');
+}
+
+// ---- vibration: a plain-language description of what the ring is doing right now ----
+function hapticActive(h){
+  const as=String((h||{}).amp||'');
+  if(as.length>=16){for(let ch=0;ch<8;ch++){let a=parseInt(as.substr(ch*2,2),16)||0;if(a>127)a=256-a;if(a>0)return true;}return false;}
+  let mask=0;try{mask=parseInt((h||{}).mask,16)||0;}catch(e){}
+  return mask!==0;
+}
+function vibeSentence(zn,meta,dist,brg,z,tag,buzzing){
+  const lead=buzzing?'<b>Buzzing</b>':'Resting between pulses,';
+  const dirHtml=(brg!=null)?('your <b>'+relDir(brg)+'</b>'):'';
+  if(zn==='idle')return '<b>Idle</b> — no tag to track, the ring is silent.';
+  if(zn==='proximity')
+    return lead+' <b>all around you</b> — the tag is <b>right here</b>'+(dist!=null?(' (~'+dist+' m)'):'')+
+      '; '+meta.pat+'. Too close for GPS to point a direction.';
+  if(zn==='signal_lost'){
+    const age=(tag&&tag.age&&tag.age!=='-')?(' (silent '+tag.age+' s)'):'';
+    return lead+(dirHtml?(' toward '+dirHtml+'’s <b>last bearing</b>'):' <b>all around</b>')+age+
+      ' — '+meta.pat+'. No fresh position from the tag.';
+  }
+  if(zn==='degraded')
+    return lead+(dirHtml?(' toward the <b>last-known</b> '+dirHtml):' <b>all around</b>')+
+      ' — <b>your</b> GPS fix is down so distance is unknown; '+meta.pat+'.';
+  let s=lead+(dirHtml?(' toward '+dirHtml):'')+' — tag is <b>'+meta.word+'</b>'+
+    (dist!=null?(' ('+dist+' m)'):'')+', '+zn+' zone; '+meta.pat;
+  const _cr=z.cr!=null?z.cr:z.cresc;
+  if(zn==='alert'&&_cr!=null&&+_cr>80)s+=' · urgency '+_cr+'%';
+  return s+'.';
+}
+function renderVibe(z,h,tag){
+  const sent=$('vibeSentence'),badge=$('zoneBadge'),desc=$('zoneDesc');
+  const clear=()=>['vDir','vDist','vBrg','vPhase','vPulse'].forEach(i=>setText(i,'—'));
+  badge.classList.remove('ding');$('vPulse').classList.remove('buzzing');
+  if(!z||z.en===undefined){                            // device build without the zone line
+    sent.innerHTML='<span class="dim">no vibration data — flash a firmware build with the zone engine.</span>';
+    badge.textContent='—';badge.style.cssText='';desc.textContent='older firmware build?';clear();return;}
+  if(z.en==='0'){                                      // HAPTIC_ZONE_ENGINE=False -> legacy ring
+    sent.innerHTML='<span class="dim">3-zone engine off — the legacy direction ring is active.</span>';
+    badge.textContent='OFF';badge.style.cssText='';desc.textContent='legacy ring';clear();return;}
+  const zn=(z.z&&z.z!=='-')?z.z:'idle', meta=ZONES[zn]||{c:'#8b949e',short:zn,word:'',pat:''};
+  badge.textContent=zn.replace('_','-');
+  badge.style.color=meta.c;badge.style.borderColor=meta.c;badge.style.background=meta.c+'1f';
+  const _bu=z.bu!=null?z.bu:z.burst;
+  if(_bu==='1')badge.classList.add('ding');
+  desc.textContent=meta.short;
+  const dist=num(z.d!=null?z.d:z.dist),brg=num(z.b!=null?z.b:z.brg),buzzing=hapticActive(h);
+  setText('vDir',meta.omni?'all around':(brg==null?'—':relDir(brg)));
+  setText('vDist',dist==null?'—':dist+' m');
+  setText('vBrg',brg==null?'—':(brg.toFixed(0)+'°'));
+  setText('vPhase','#'+(z.ph==null?'?':z.ph)+(_bu==='1'?' · DING':''));
+  const pulse=$('vPulse');
+  pulse.textContent=buzzing?'● buzzing':'○ resting';
+  pulse.style.color=buzzing?meta.c:'var(--dim)';
+  pulse.classList.toggle('buzzing',buzzing);
+  sent.innerHTML=vibeSentence(zn,meta,dist,brg,z,tag,buzzing);
+  sent.style.color=meta.c;
+}
+
+function render(s){
+  const p=s.parsed||{}, head=p.head||{}, o=p.orient||{};
+  // connection: liveness is whether READS are arriving (rx_age), not whether the report text changed —
+  // a still device emits an identical report, which isn't "stale".
+  let cls='off',txt=s.status||'disconnected';
+  if(s.connected){if(s.rx_age!=null&&s.rx_age<2.0){cls='live';txt='LIVE';}else{cls='stale';txt='no data '+(s.rx_age?s.rx_age.toFixed(0):'?')+'s';}}
+  setConn(cls,txt);
+  setText('fw','fw '+(head.fw||'—'));
+  $('orientCard').classList.toggle('muted',!s.connected);
+  $('vibeCard').classList.toggle('muted',!s.connected);
+
+  // orientation
+  const rl=num(o.rl),pit=num(o.pit),yw=num(o.yw);
+  setText('vx',rl==null?'--':rl.toFixed(1)+'°');
+  setText('vy',pit==null?'--':pit.toFixed(1)+'°');
+  setText('vz',yw==null?'--':yw.toFixed(1)+'°');
+  setCompass(yw);
+  const oMap={'1':'vertical','2':'horizontal'};
+  if(Object.keys(o).length){const g=num(o.g);
+    setText('orientSub','orientation: '+(oMap[o.o]||o.o||'?')+'   ·   |g| '+(g==null?'?':g.toFixed(2))+
+      (yw!=null?('   ·   heading '+compassDir(yw)):''));}
+  else setText('orientSub','no fusion data (app not running / sensor down)');
+
+  // status
+  setText('s_fw',head.fw||'—');
+  const hb=$('s_healthy');
+  hb.innerHTML=head.healthy==='1'?'<span class="badge ok">healthy</span>'
+    :(head.healthy!=null?'<span class="badge no">NOT healthy</span>':'—');
+  setText('s_stage',(p.up||{}).stage||'—');
+  setText('s_up',fmtUp((p.up||{}).up_ms));
+  setText('s_mem',fmtKB((p.mem||{}).free));
+  setText('s_rc',head.rc||'—');
+  setText('s_run',runSlot(p.chip));
+
+  renderRing(p.haptic||{});
+  renderVibe(p.zone, p.haptic||{}, p.tag);
+  renderZoneCfg(p.zone||{});
+  renderGps(p.gps);
+  renderMap(p.gps, p.tag);
+
+  const errs=p.errors||[],tb=p.tb||'';
+  const el=$('errs');
+  if(!errs.length&&!tb){el.className='err clear';el.textContent='All clear.';}
+  else{el.className='err';el.textContent=errs.join('\n')+(tb?('\n\n'+tb):'');}
+
+  setText('foot',(s.dev?('device '+s.dev):'')+
+    (s.rx_age!=null?('       rx '+s.rx_age.toFixed(1)+'s ago'):''));
+}
+
+// ---- zone tuning card (Z command: 9 payload bytes; pat= digits: style,tune,boost,width,compass) ----
+let _zcDirty=false,_zcSeeded=false;
+for(const id of ['zc_p','zc_s','zc_a','zc_v','zc_f','zc_st','zc_t','zc_b','zc_w'])
+  $(id).addEventListener('input',()=>{_zcDirty=true;if(id==='zc_v')$('zc_vlbl').textContent=$('zc_v').value;});
+$('zc_cm').addEventListener('change',()=>{applyZoneCfg();
+  $('hint').textContent='compass mode '+($('zc_cm').checked?'ON — one motor holds north':'OFF — tracking resumed');});
+const STYLES=['classic','pulse','strong'],TUNENAMES=['off','click','dbl','buzz','alert','pulsing'];
+function renderZoneCfg(z){
+  const cur=$('zc_cur');if(!cur)return;
+  const thr=z.thr,v=z.v,f=z.f,pat=z.pat;
+  const st=pat?+pat[0]:undefined,tn=pat?+pat[1]:undefined,bo=pat?+pat[2]:undefined,
+        wd=pat&&pat.length>3?+pat[3]:undefined,cm=pat&&pat.length>4?+pat[4]:undefined;
+  cur.textContent='device: '+(thr?(thr+' m · '+(v||'?')+'%'+(f!==undefined?(' · front '+(f||0)):'')
+    +(pat!==undefined?(' · '+(STYLES[st]||st)+(tn?' · '+(TUNENAMES[tn]||tn):'')+(bo?' · BOOST':'')
+    +(wd!==undefined?(' · '+wd+'-motor'):'')+(cm?' · COMPASS→N':'')):'')):'—');
+  if(thr&&!_zcDirty&&!_zcSeeded){
+    const m=thr.split('/');
+    if(m.length===3){$('zc_p').value=m[0];$('zc_s').value=m[1];$('zc_a').value=m[2];}
+    $('zc_v').value=v||100;$('zc_vlbl').textContent=$('zc_v').value;
+    $('zc_f').value=f!==undefined?f:0;
+    if(st!==undefined)$('zc_st').value=st;
+    if(tn!==undefined)$('zc_t').value=tn;
+    $('zc_b').checked=bo===1;
+    if(wd!==undefined)$('zc_w').value=wd;
+    $('zc_cm').checked=cm===1;
+    _zcSeeded=true;
+  }
+}
+function applyZoneCfg(){
+  const p=+$('zc_p').value,s2=+$('zc_s').value,a=+$('zc_a').value,v=+$('zc_v').value;
+  let flags=1;                          // bit0 = clockwise winding (belt verified cw 2026-08-30)
+  if($('zc_b').checked)flags|=2;        // bit1 = overdrive boost
+  if($('zc_cm').checked)flags|=4;       // bit2 = compass mode
+  const f=Math.min(15,Math.max(0,+$('zc_f').value||0));
+  const st=+$('zc_st').value,tn=+$('zc_t').value,wd=+$('zc_w').value;
+  if(!(p>0&&p<s2&&s2<a&&a<=255)){$('hint').textContent='need 0 < prox < safe < alert ≤ 255 m';return;}
+  cmd({cmd:'RAWBYTES',bytes:[CMD.Z,p,s2,a,v,flags,f,st,tn,wd]});
+  _zcDirty=false;_zcSeeded=false;
+  $('hint').textContent='zone config sent — watch "device:" confirm';
+}
+
+// =================================== parser (port of parse_report/_kv) =====================
+function _kv(s){const d={};for(const tok of s.split(' ')){const i=tok.indexOf('=');if(i>=0)d[tok.slice(0,i)]=tok.slice(i+1);}return d;}
+function _find(line,prefix){const i=line.indexOf(prefix);if(i<0)return null;return line.slice(i+prefix.length).split(' ')[0];}
+function _between(line,start,end){let a=line.indexOf(start);if(a<0)return null;a+=start.length;const b=line.indexOf(end,a);return b>=0?line.slice(a,b):line.slice(a);}
+function parseReport(text){
+  const out={raw:text,errors:[],tb:''};
+  const lines=text.split(/\r?\n/);
+  for(let i=0;i<lines.length;i++){const ln=lines[i];
+    if(ln.startsWith('fw='))out.head=_kv(ln);                 // fw, rc, healthy
+    else if(ln.startsWith('mem '))out.mem=_kv(ln.slice(4));   // free, alloc
+    else if(ln.startsWith('up_ms='))out.up=_kv(ln);           // up_ms, stage
+    else if(ln.startsWith('orient '))out.orient=_kv(ln.slice(7)); // o, pit, ap, rl, yw, g
+    else if(ln.startsWith('haptic ')){const h={};
+      for(const key of ['ok','mask','amp']){const tok=_find(ln,key+'=');if(tok!=null)h[key]=tok;}
+      const ids=_between(ln,'ids=[',']');if(ids!=null)h.ids='['+ids+']';
+      out.haptic=h;}
+    else if(ln.startsWith('zone '))out.zone=_kv(ln.slice(5)); // en, z, ph, burst, dist, brg, cresc
+    else if(ln.startsWith('gps '))out.gps=_kv(ln.slice(4));   // fix, sol, sat, cno, cnt, acc, age, lat, lon, alt, spd, cog
+    else if(ln.startsWith('tag '))out.tag=_kv(ln.slice(4));   // id, lat, lon, acc, dist, brg, age, fresh
+    else if(ln.startsWith('hio '))out.hio=ln.slice(4);
+    else if(ln.startsWith('state '))out.state=ln.slice(6);
+    else if(ln.startsWith('chip '))out.chip=ln.slice(5);
+    else if(ln.startsWith('probe '))out.probe=ln.slice(6);
+    else if(ln.startsWith('ERR '))out.errors.push(ln.slice(4));
+    else if(ln==='TB:'){out.tb=lines.slice(i+1).join('\n');break;}
+  }
+  return out;
+}
+
+// =================================== Web Bluetooth transport ===============================
+let _device=null,_char=null,_poller=null,_lastRx=0,_connected=false,_busy=false;
+let _userQuit=false,_reconnecting=false;
+let _lastParsed={},_lastReport='';
+const POLL_MS=500;  // iOS Web Bluetooth is fragile at high rates — 2 Hz is plenty for diagnostics
+
+function snapshot(text){
+  if(text!=null){_lastParsed=parseReport(text);_lastReport=text;}
+  const rx_age=_lastRx?((performance.now()-_lastRx)/1000):null;
+  return {
+    connected:_connected,
+    status:_connected?'connected':'disconnected',
+    dev:_device?(_device.name||'totem'):null,
+    rx_age:rx_age,
+    parsed:_lastParsed,
+    report:_lastReport,
+  };
+}
+
+async function writeChar(bytes){
+  // iOS Web Bluetooth is much more reliable with write-WITH-response — it also serializes the
+  // write before the follow-up read. The DATA characteristic supports both kinds.
+  return await _char.writeValue(bytes);
+}
+
+// the proven poll cycle: write 'D' (re-render, no I2C) -> wait ~80 ms -> read the full ~900 B report
+async function poll(){
+  if(!_connected||!_char||_busy)return;
+  _busy=true;
+  try{
+    await writeChar(Uint8Array.of(CMD.D));
+    await new Promise(r=>setTimeout(r,80));
+    const dv=await _char.readValue();
+    const text=new TextDecoder().decode(dv);
+    _lastRx=performance.now();
+    render(snapshot(text));
+    $('hint').textContent='';
+  }catch(e){
+    // a single dropped read is fine — gattserverdisconnected handles a true drop;
+    // just let liveness (rx_age) flip the pill to "no data Ns".
+    render(snapshot());
+  }finally{_busy=false;}
+}
+
+function cmdBytes(o){
+  const c=String(o.cmd||'').toUpperCase();
+  if(c==='P')return Uint8Array.of(CMD.P);                              // probe sensors
+  if(c==='SWEEP')return Uint8Array.of(CMD.H);                          // haptic sweep 1->8
+  if(c==='H'){const ch=parseInt(o.ch,10);                              // buzz one motor (0-indexed)
+    return (ch>=0&&ch<=7)?Uint8Array.of(CMD.H,ch):Uint8Array.of(CMD.H);}
+  if(c==='R')return Uint8Array.of(CMD.R);                              // boot other slot (reboots)
+  if(c==='O')return Uint8Array.of(CMD.O);                              // legacy BLE-OTA mode (reboots)
+  if(c==='W')return Uint8Array.of(CMD.W);                              // direct-connect WiFi update (reboots)
+  if(c==='V')return Uint8Array.of(CMD.V);                              // haptic test-fire preview
+  if(c==='RAWBYTES')return Uint8Array.from(o.bytes||[]);               // arbitrary command payload
+  return null;
+}
+async function cmd(o){
+  if(!_connected||!_char){$('hint').textContent='Not connected — tap Connect first.';return;}
+  const bytes=cmdBytes(o);if(!bytes)return;
+  try{
+    // share the single BLE connection with the poll — wait out any in-flight read, then write
+    let guard=0;while(_busy&&guard++<50)await new Promise(r=>setTimeout(r,20));
+    _busy=true;
+    await writeChar(bytes);
+    $('hint').textContent='sent: '+(o.cmd==='H'?('buzz motor '+(o.ch+1)):o.cmd);
+  }catch(e){$('hint').textContent='command failed: '+(e&&e.message?e.message:e);}
+  finally{_busy=false;}
+}
+function confirmCmd(msg,o){if(confirm(msg))cmd(o);}
+
+// (re)attach to the already-chosen device: connect GATT, find the characteristic, start polling
+async function attach(){
+  setConn('off','connecting…');
+  const server=await _device.gatt.connect();
+  const svc=await server.getPrimaryService(SERVICE_UUID);
+  _char=await svc.getCharacteristic(DATA_UUID);
+  _connected=true;_lastRx=0;_busy=false;_reconnecting=false;
+  $('btnConn').textContent='Disconnect';
+  setConn('stale','connected');
+  if(_poller)clearInterval(_poller);
+  _poller=setInterval(poll,POLL_MS);
+  poll();
+}
+
+// fires on every GATT drop. iOS drops the link readily, so auto-reconnect a few times before giving up.
+async function onDisconnect(){
+  _connected=false;_char=null;
+  if(_poller){clearInterval(_poller);_poller=null;}
+  $('btnConn').textContent='Connect';
+  render(snapshot());
+  if(_userQuit){setConn('off','disconnected');$('hint').textContent='Disconnected. Tap Connect to re-attach.';return;}
+  if(_reconnecting)return;                           // a reconnect loop is already running
+  _reconnecting=true;
+  for(let attempt=1;attempt<=6 && !_userQuit;attempt++){
+    setConn('stale','reconnecting… '+attempt);
+    $('hint').textContent='Link dropped — auto-reconnecting ('+attempt+'/6)…';
+    try{
+      await new Promise(r=>setTimeout(r,700));
+      await attach();                                // resets _reconnecting on success
+      $('hint').textContent='';
+      return;
+    }catch(e){}
+  }
+  _reconnecting=false;
+  setConn('off','disconnected');
+  $('hint').textContent='Lost the link and could not reconnect. Tap Connect to retry.';
+}
+
+async function connect(){
+  if(!navigator.bluetooth){
+    setConn('off','no Web Bluetooth');
+    $('hint').textContent='This browser has no Web Bluetooth. On iOS, open this page in the Bluefy app (Safari can’t do BLE).';
+    return;
+  }
+  try{
+    _userQuit=false;_reconnecting=false;
+    setConn('off','requesting…');$('hint').textContent='';
+    // show ALL nearby BLE devices in the chooser (a strict {name:'totem'} filter often hides the
+    // device on iOS) — you pick 'totem' yourself; optionalServices lets us reach the service after.
+    _device=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SERVICE_UUID]});
+    _device.addEventListener('gattserverdisconnected',onDisconnect);
+    await attach();
+  }catch(e){
+    setConn('off','connect failed');
+    $('hint').textContent='Connect failed: '+(e&&e.message?e.message:e)+' — is a Mac dashboard still holding the device? (one BLE slot)';
+  }
+}
+
+function disconnect(){
+  _userQuit=true;
+  if(_poller){clearInterval(_poller);_poller=null;}
+  try{if(_device&&_device.gatt&&_device.gatt.connected)_device.gatt.disconnect();}catch(e){}
+  _connected=false;_char=null;
+  $('btnConn').textContent='Connect';
+  setConn('off','disconnected');
+}
+function toggleConn(){_connected?disconnect():connect();}
+
+// initial paint + capability hint
+render(snapshot());
+if(!navigator.bluetooth){
+  $('hint').textContent='Web Bluetooth not available — open this page in the Bluefy browser (iOS Safari can’t do Bluetooth).';
+}
+</script>
+</body>
+</html>
