@@ -565,7 +565,7 @@ function applyZoneCfg(){
   const st=+$('zc_st').value,tn=+$('zc_t').value,wd=+$('zc_w').value;
   if(!(p>0&&p<s2&&s2<a&&a<=255)){$('hint').textContent='need 0 < prox < safe < alert ≤ 255 m';return;}
   cmd({cmd:'RAWBYTES',bytes:[CMD.Z,p,s2,a,v,flags,f,st,tn,wd]});
-  _zcDirty=false;_zcSeeded=false;
+  _zcDirty=false;
   $('hint').textContent='zone config sent — watch "device:" confirm';
 }
 
