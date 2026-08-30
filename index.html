@@ -701,7 +701,10 @@ async function connect(){
     setConn('off','requesting…');$('hint').textContent='';
     // show ALL nearby BLE devices in the chooser (a strict {name:'totem'} filter often hides the
     // device on iOS) — you pick 'totem' yourself; optionalServices lets us reach the service after.
-    _device=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SERVICE_UUID]});
+    _device=await navigator.bluetooth.requestDevice({
+      // only TetherSafe units (new name, legacy 'totem', or the diag service UUID)
+      filters:[{namePrefix:'TetherSafe'},{namePrefix:'totem'},{services:[SERVICE_UUID]}],
+      optionalServices:[SERVICE_UUID]});
     _device.addEventListener('gattserverdisconnected',onDisconnect);
     await attach();
   }catch(e){
